@@ -1,0 +1,29 @@
+# Зависимости
+node_modules/
+
+# Сборка и кэш
+dist/
+build/
+.cache/
+.vite/
+.parcel-cache/
+coverage/
+
+# Логи
+*.log
+
+# Секреты и локальные HTTPS-сертификаты
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Настройки редакторов
+.vscode/
+.idea/
+
+# Системный мусор
+.DS_Store
+Thumbs.db
+desktop.ini
