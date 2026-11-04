@@ -1,5 +1,5 @@
-// Этап 1.3: шар падает по прямой трубе, ветки торчат из стенок,
-// наклон и переворот с датчика телефона, на компьютере с клавиатуры.
+// Этап 1.4: шар падает по прямой трубе, ветки торчат из стенок,
+// наклон, переворот и пауза на плоском телефоне с датчика, на компьютере с клавиатуры.
 // Настройки лежат в config.js. Ось Y направлена вниз, глубина 0 — верх трубы.
 
 const canvas = document.getElementById("game");
@@ -25,8 +25,8 @@ let tilt = 0;
 let timeBank = 0;
 let lastFrameTime = null;
 let isRunning = !IS_PHONE;
-const keys = { left: false, right: false, flip: false };
-const sensor = { hasData: false, angle: 0, tilt: 0, failed: false };
+const keys = { left: false, right: false, flip: false, flat: false };
+const sensor = { hasData: false, angle: 0, tilt: 0, failed: false, isFlat: false, flatSince: null };
 const flip = { phase: "fall", zone: "fall", keyAngle: 0, rollbackStart: null, isHovering: false };
 
 
@@ -279,12 +279,16 @@ function drawHud() {
   if (sensor.hasData) {
     ctx.fillText("Угол телефона: " + sensor.angle.toFixed(0) + "°", fontSize * 0.7, fontSize * 5.4);
   }
-  ctx.fillText("Режим: " + PHASE_NAMES[flip.phase], fontSize * 0.7, fontSize * (sensor.hasData ? 6.7 : 5.4));
+  const phaseName = isPaused() ? "пауза" : PHASE_NAMES[flip.phase];
+  ctx.fillText("Режим: " + phaseName, fontSize * 0.7, fontSize * (sensor.hasData ? 6.7 : 5.4));
 
   ctx.textAlign = "center";
   if (!IS_PHONE) {
-    ctx.fillText("← → или A D: наклон", canvas.width / 2, canvas.height - fontSize * 2.3);
+    ctx.fillText("← → или A D: наклон   F: плоский телефон", canvas.width / 2, canvas.height - fontSize * 2.3);
     ctx.fillText("Пробел: переворот   R: заново", canvas.width / 2, canvas.height - fontSize);
+  }
+  if (isPaused()) {
+    ctx.fillText(IS_PHONE ? "Пауза: подними телефон" : "Пауза: нажми F", canvas.width / 2, canvas.height * 0.45);
   }
   if (sensor.failed && !sensor.hasData) {
     ctx.fillText("Датчик не отвечает", canvas.width / 2, canvas.height - fontSize);
@@ -325,6 +329,8 @@ function setKey(event, isDown) {
   } else if (event.code === "Space") {
     keys.flip = isDown;
     event.preventDefault();
+  } else if (event.code === "KeyF" && isDown && !event.repeat) {
+    keys.flat = !keys.flat;
   } else if (event.code === "KeyR" && isDown) {
     restart();
   }
@@ -353,9 +359,36 @@ function tiltFromAngle(angle) {
   return Math.sign(steering) * Math.min(size / range, 1);
 }
 
+function isPaused() {
+  return keys.flat || sensor.isFlat;
+}
+
+function updateFlat(gravity, now) {
+  // Угол телефона к горизонту. На плоском телефоне угол поворота случаен, поэтому его не читаем.
+  const inScreen = Math.hypot(gravity.x, gravity.y);
+  const elevation = Math.atan2(inScreen, Math.abs(gravity.z || 0)) * 180 / Math.PI;
+  const limit = sensor.isFlat ? CONFIG.flatExitAngle : CONFIG.flatEnterAngle;
+  if (elevation >= limit) {
+    sensor.isFlat = false;
+    sensor.flatSince = null;
+    return false;
+  }
+  if (sensor.flatSince === null) {
+    sensor.flatSince = now;
+  }
+  if (now - sensor.flatSince >= CONFIG.flatHoldTime * 1000) {
+    sensor.isFlat = true;
+  }
+  return true;
+}
+
 function onDeviceMotion(event) {
   const gravity = event.accelerationIncludingGravity;
   if (!gravity || gravity.x === null || gravity.y === null) {
+    return;
+  }
+  sensor.hasData = true;
+  if (updateFlat(gravity, performance.now())) {
     return;
   }
   // На iOS знаки осей обратные по сравнению с Android.
@@ -363,7 +396,6 @@ function onDeviceMotion(event) {
   const sideSign = CONFIG.sensorInvert ? -1 : 1;
   sensor.angle = Math.atan2(-gravity.x * systemSign * sideSign, gravity.y * systemSign) * 180 / Math.PI;
   sensor.tilt = tiltFromAngle(sensor.angle);
-  sensor.hasData = true;
 }
 
 async function requestSensorPermission() {
@@ -433,7 +465,7 @@ function setupPhone() {
 // ---------- Главный цикл ----------
 
 function frame(now) {
-  if (lastFrameTime !== null && isRunning) {
+  if (lastFrameTime !== null && isRunning && !isPaused()) {
     timeBank += Math.min((now - lastFrameTime) / 1000, MAX_FRAME_TIME);
     while (timeBank >= PHYSICS_STEP) {
       stepPhysics(PHYSICS_STEP);
