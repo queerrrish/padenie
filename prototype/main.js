@@ -27,7 +27,7 @@ let lastFrameTime = null;
 let isRunning = !IS_PHONE;
 const keys = { left: false, right: false, flip: false };
 const sensor = { hasData: false, angle: 0, tilt: 0, failed: false };
-const flip = { phase: "fall", zone: "fall", keyAngle: 0, brakeRate: 0, rollbackStart: null };
+const flip = { phase: "fall", zone: "fall", keyAngle: 0, rollbackStart: null, isHovering: false };
 
 
 // ---------- Физика ----------
@@ -89,8 +89,8 @@ function restart() {
   flip.phase = "fall";
   flip.zone = "fall";
   flip.keyAngle = 0;
-  flip.brakeRate = 0;
   flip.rollbackStart = null;
+  flip.isHovering = false;
   createWorld();
 }
 
@@ -136,7 +136,7 @@ function zoneFromAngle(angle) {
 function brakeBall(dt) {
   const velocity = ball.getLinearVelocity();
   const speed = velocity.length();
-  const newSpeed = Math.max(0, speed - flip.brakeRate * dt);
+  const newSpeed = Math.max(0, speed - CONFIG.flipBrakeForce * dt);
   velocity.mul(speed > 0 ? newSpeed / speed : 0);
   ball.setLinearVelocity(velocity);
 }
@@ -147,8 +147,8 @@ function updateFlip(dt) {
 
   if (zone !== flip.zone) {
     flip.zone = zone;
-    flip.brakeRate = ball.getLinearVelocity().length() / CONFIG.flipBrakeTime;
     flip.rollbackStart = null;
+    flip.isHovering = false;
   }
 
   if (zone === "fall") {
@@ -166,9 +166,16 @@ function updateFlip(dt) {
   if (flip.rollbackStart === null) {
     flip.rollbackStart = ball.getPosition().y;
   }
-  if (flip.rollbackStart - ball.getPosition().y >= CONFIG.rollbackDistance) {
+  // Начинаем гасить скорость заранее, чтобы шар плавно замер на расстоянии отката.
+  const climbed = flip.rollbackStart - ball.getPosition().y;
+  const upSpeed = Math.max(0, -ball.getLinearVelocity().y);
+  const stoppingDistance = upSpeed * upSpeed / (2 * CONFIG.flipBrakeForce);
+  if (climbed + stoppingDistance >= CONFIG.rollbackDistance) {
+    flip.isHovering = true;
+  }
+  if (flip.isHovering) {
     flip.phase = "hover";
-    ball.setLinearVelocity(planck.Vec2(0, 0));
+    brakeBall(dt);
     return planck.Vec2(0, 0);
   }
   flip.phase = "rollback";
