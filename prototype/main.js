@@ -1,5 +1,5 @@
-// Этап 1.2: шар падает по прямой трубе, ветки торчат из стенок,
-// наклон с датчика телефона, на компьютере с клавиатуры.
+// Этап 1.3: шар падает по прямой трубе, ветки торчат из стенок,
+// наклон и переворот с датчика телефона, на компьютере с клавиатуры.
 // Настройки лежат в config.js. Ось Y направлена вниз, глубина 0 — верх трубы.
 
 const canvas = document.getElementById("game");
@@ -15,6 +15,7 @@ const SCREEN_ASPECT = 9 / 16;
 const WALL_THICKNESS = 1;
 const BOTTOM_TOLERANCE = 0.05;
 const SENSOR_WAIT_MS = 2000;
+const PHASE_NAMES = { fall: "падение", stop: "остановка", rollback: "откат", hover: "зависание" };
 const IS_PHONE = window.matchMedia("(pointer: coarse)").matches;
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
@@ -24,8 +25,9 @@ let tilt = 0;
 let timeBank = 0;
 let lastFrameTime = null;
 let isRunning = !IS_PHONE;
-const keys = { left: false, right: false };
+const keys = { left: false, right: false, flip: false };
 const sensor = { hasData: false, angle: 0, tilt: 0, failed: false };
+const flip = { phase: "fall", zone: "fall", keyAngle: 0, brakeRate: 0, rollbackStart: null };
 
 
 // ---------- Физика ----------
@@ -84,6 +86,11 @@ function createWorld() {
 function restart() {
   tilt = 0;
   timeBank = 0;
+  flip.phase = "fall";
+  flip.zone = "fall";
+  flip.keyAngle = 0;
+  flip.brakeRate = 0;
+  flip.rollbackStart = null;
   createWorld();
 }
 
@@ -105,9 +112,72 @@ function updateTilt(dt) {
   tilt += Math.max(-maxChange, Math.min(maxChange, target - tilt));
 }
 
+function updateKeyFlip(dt) {
+  const target = keys.flip ? 180 : 0;
+  const maxChange = CONFIG.keyboardFlipSpeed * dt;
+  flip.keyAngle += Math.max(-maxChange, Math.min(maxChange, target - flip.keyAngle));
+}
+
+function currentPhoneAngle() {
+  if (keys.flip || flip.keyAngle > 0 || !sensor.hasData) {
+    return flip.keyAngle;
+  }
+  return sensor.angle;
+}
+
+function zoneFromAngle(angle) {
+  const size = Math.abs(angle);
+  if (size < CONFIG.flipStopStartAngle) {
+    return "fall";
+  }
+  return size < CONFIG.flipRollbackAngle ? "stop" : "rollback";
+}
+
+function brakeBall(dt) {
+  const velocity = ball.getLinearVelocity();
+  const speed = velocity.length();
+  const newSpeed = Math.max(0, speed - flip.brakeRate * dt);
+  velocity.mul(speed > 0 ? newSpeed / speed : 0);
+  ball.setLinearVelocity(velocity);
+}
+
+function updateFlip(dt) {
+  updateKeyFlip(dt);
+  const zone = zoneFromAngle(currentPhoneAngle());
+
+  if (zone !== flip.zone) {
+    flip.zone = zone;
+    flip.brakeRate = ball.getLinearVelocity().length() / CONFIG.flipBrakeTime;
+    flip.rollbackStart = null;
+  }
+
+  if (zone === "fall") {
+    flip.phase = "fall";
+    return planck.Vec2(tilt * CONFIG.sideGravity, CONFIG.fallGravity);
+  }
+
+  // Шар сначала тормозит, даже если телефон перевернули одним рывком.
+  if (zone === "stop" || (flip.rollbackStart === null && ball.getLinearVelocity().y > 0)) {
+    flip.phase = "stop";
+    brakeBall(dt);
+    return planck.Vec2(0, 0);
+  }
+
+  if (flip.rollbackStart === null) {
+    flip.rollbackStart = ball.getPosition().y;
+  }
+  if (flip.rollbackStart - ball.getPosition().y >= CONFIG.rollbackDistance) {
+    flip.phase = "hover";
+    ball.setLinearVelocity(planck.Vec2(0, 0));
+    return planck.Vec2(0, 0);
+  }
+  flip.phase = "rollback";
+  return planck.Vec2(tilt * CONFIG.sideGravity, -CONFIG.fallGravity * CONFIG.rollbackGravityRatio);
+}
+
 function stepPhysics(dt) {
   updateTilt(dt);
-  world.setGravity(planck.Vec2(tilt * CONFIG.sideGravity, CONFIG.fallGravity));
+  world.setGravity(updateFlip(dt));
   world.step(dt);
   limitSpeed();
 }
@@ -190,10 +260,12 @@ function drawHud() {
   if (sensor.hasData) {
     ctx.fillText("Угол телефона: " + sensor.angle.toFixed(0) + "°", fontSize * 0.7, fontSize * 5.4);
   }
+  ctx.fillText("Режим: " + PHASE_NAMES[flip.phase], fontSize * 0.7, fontSize * (sensor.hasData ? 6.7 : 5.4));
 
   ctx.textAlign = "center";
   if (!IS_PHONE) {
-    ctx.fillText("← → или A D: наклон   R: заново", canvas.width / 2, canvas.height - fontSize);
+    ctx.fillText("← → или A D: наклон", canvas.width / 2, canvas.height - fontSize * 2.3);
+    ctx.fillText("Пробел: переворот   R: заново", canvas.width / 2, canvas.height - fontSize);
   }
   if (sensor.failed && !sensor.hasData) {
     ctx.fillText("Датчик не отвечает", canvas.width / 2, canvas.height - fontSize);
@@ -231,6 +303,9 @@ function setKey(event, isDown) {
   } else if (event.code === "ArrowRight" || event.code === "KeyD") {
     keys.right = isDown;
     event.preventDefault();
+  } else if (event.code === "Space") {
+    keys.flip = isDown;
+    event.preventDefault();
   } else if (event.code === "KeyR" && isDown) {
     restart();
   }
@@ -241,6 +316,7 @@ window.addEventListener("keyup", (event) => setKey(event, false));
 window.addEventListener("blur", () => {
   keys.left = false;
   keys.right = false;
+  keys.flip = false;
 });
 window.addEventListener("resize", resizeCanvas);
 
@@ -248,12 +324,14 @@ window.addEventListener("resize", resizeCanvas);
 // ---------- Датчик телефона ----------
 
 function tiltFromAngle(angle) {
-  const size = Math.abs(angle) - CONFIG.sensorDeadZoneAngle;
+  // Вверх ногами считаем отклонение от 180°: шар идёт туда, куда реально наклонён экран.
+  const steering = Math.abs(angle) <= 90 ? angle : Math.sign(angle) * (180 - Math.abs(angle));
+  const size = Math.abs(steering) - CONFIG.sensorDeadZoneAngle;
   if (size <= 0) {
     return 0;
   }
   const range = CONFIG.sensorFullTiltAngle - CONFIG.sensorDeadZoneAngle;
-  return Math.sign(angle) * Math.min(size / range, 1);
+  return Math.sign(steering) * Math.min(size / range, 1);
 }
 
 function onDeviceMotion(event) {
@@ -262,8 +340,9 @@ function onDeviceMotion(event) {
     return;
   }
   // На iOS знаки осей обратные по сравнению с Android.
-  const sign = (IS_IOS ? -1 : 1) * (CONFIG.sensorInvert ? -1 : 1);
-  sensor.angle = Math.atan2(-gravity.x * sign, Math.abs(gravity.y)) * 180 / Math.PI;
+  const systemSign = IS_IOS ? -1 : 1;
+  const sideSign = CONFIG.sensorInvert ? -1 : 1;
+  sensor.angle = Math.atan2(-gravity.x * systemSign * sideSign, gravity.y * systemSign) * 180 / Math.PI;
   sensor.tilt = tiltFromAngle(sensor.angle);
   sensor.hasData = true;
 }
