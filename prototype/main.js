@@ -153,7 +153,7 @@ function updateFlip(dt) {
 
   if (zone === "fall") {
     flip.phase = "fall";
-    return planck.Vec2(tilt * CONFIG.sideGravity, CONFIG.fallGravity);
+    return planck.Vec2(0, CONFIG.fallGravity);
   }
 
   // Шар сначала тормозит, даже если телефон перевернули одним рывком.
@@ -172,12 +172,24 @@ function updateFlip(dt) {
     return planck.Vec2(0, 0);
   }
   flip.phase = "rollback";
-  return planck.Vec2(tilt * CONFIG.sideGravity, -CONFIG.fallGravity * CONFIG.rollbackGravityRatio);
+  return planck.Vec2(0, -CONFIG.fallGravity * CONFIG.rollbackGravityRatio);
+}
+
+function steerBall(dt) {
+  // Наклон задаёт боковую скорость напрямую, поэтому шар не надо ловить встречным наклоном.
+  const velocity = ball.getLinearVelocity();
+  const target = tilt * CONFIG.sideMaxSpeed;
+  const maxChange = CONFIG.sideResponse * dt;
+  velocity.x += Math.max(-maxChange, Math.min(maxChange, target - velocity.x));
+  ball.setLinearVelocity(velocity);
 }
 
 function stepPhysics(dt) {
   updateTilt(dt);
   world.setGravity(updateFlip(dt));
+  if (flip.phase === "fall" || flip.phase === "rollback") {
+    steerBall(dt);
+  }
   world.step(dt);
   limitSpeed();
 }
