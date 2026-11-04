@@ -15,6 +15,7 @@ const SCREEN_ASPECT = 9 / 16;
 const WALL_THICKNESS = 1;
 const BOTTOM_TOLERANCE = 0.05;
 const SENSOR_WAIT_MS = 2000;
+const BUILD_NAME = "1.4.1";
 const PHASE_NAMES = { fall: "падение", stop: "остановка", rollback: "откат", hover: "зависание" };
 const IS_PHONE = window.matchMedia("(pointer: coarse)").matches;
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -26,7 +27,7 @@ let timeBank = 0;
 let lastFrameTime = null;
 let isRunning = !IS_PHONE;
 const keys = { left: false, right: false, flip: false, flat: false };
-const sensor = { hasData: false, angle: 0, tilt: 0, failed: false, isFlat: false, flatSince: null };
+const sensor = { hasData: false, angle: 0, elevation: 90, tilt: 0, failed: false, isFlat: false, flatSince: null };
 const flip = { phase: "fall", zone: "fall", keyAngle: 0, rollbackStart: null, isHovering: false };
 
 
@@ -281,6 +282,10 @@ function drawHud() {
   }
   const phaseName = isPaused() ? "пауза" : PHASE_NAMES[flip.phase];
   ctx.fillText("Режим: " + phaseName, fontSize * 0.7, fontSize * (sensor.hasData ? 6.7 : 5.4));
+  if (sensor.hasData) {
+    ctx.fillText("К горизонту: " + sensor.elevation.toFixed(0) + "°", fontSize * 0.7, fontSize * 8);
+  }
+  ctx.fillText("Версия " + BUILD_NAME, fontSize * 0.7, fontSize * (sensor.hasData ? 9.3 : 6.7));
 
   ctx.textAlign = "center";
   if (!IS_PHONE) {
@@ -366,9 +371,9 @@ function isPaused() {
 function updateFlat(gravity, now) {
   // Угол телефона к горизонту. На плоском телефоне угол поворота случаен, поэтому его не читаем.
   const inScreen = Math.hypot(gravity.x, gravity.y);
-  const elevation = Math.atan2(inScreen, Math.abs(gravity.z || 0)) * 180 / Math.PI;
+  sensor.elevation = Math.atan2(inScreen, Math.abs(gravity.z || 0)) * 180 / Math.PI;
   const limit = sensor.isFlat ? CONFIG.flatExitAngle : CONFIG.flatEnterAngle;
-  if (elevation >= limit) {
+  if (sensor.elevation >= limit) {
     sensor.isFlat = false;
     sensor.flatSince = null;
     return false;
@@ -376,10 +381,14 @@ function updateFlat(gravity, now) {
   if (sensor.flatSince === null) {
     sensor.flatSince = now;
   }
-  if (now - sensor.flatSince >= CONFIG.flatHoldTime * 1000) {
+  return true;
+}
+
+function updateFlatHold(now) {
+  // Проверяем каждый кадр: неподвижный телефон может вообще перестать присылать данные.
+  if (sensor.flatSince !== null && now - sensor.flatSince >= CONFIG.flatHoldTime * 1000) {
     sensor.isFlat = true;
   }
-  return true;
 }
 
 function onDeviceMotion(event) {
@@ -465,6 +474,7 @@ function setupPhone() {
 // ---------- Главный цикл ----------
 
 function frame(now) {
+  updateFlatHold(performance.now());
   if (lastFrameTime !== null && isRunning && !isPaused()) {
     timeBank += Math.min((now - lastFrameTime) / 1000, MAX_FRAME_TIME);
     while (timeBank >= PHYSICS_STEP) {
