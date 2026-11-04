@@ -19,6 +19,9 @@ coverage/
 *.pem
 *.key
 
+# Референсы хранятся только на компьютере
+assets/references/
+
 # Настройки редакторов
 .vscode/
 .idea/
