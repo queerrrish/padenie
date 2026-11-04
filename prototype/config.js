@@ -57,8 +57,8 @@ const CONFIG = {
   // depth: глубина от верха трубы, м. length: насколько торчит внутрь, м.
   // thickness: толщина, м. Можно добавлять и удалять строки.
   branches: [
-    { side: "left",  depth: 10, length: 1.7, thickness: 0.12 },
-    { side: "right", depth: 20, length: 1.7, thickness: 0.12 },
+    { side: "left",  depth: 10, length: 0.9, thickness: 0.12 },
+    { side: "right", depth: 20, length: 0.9, thickness: 0.12 },
   ],
 
 
